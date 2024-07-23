@@ -20,8 +20,8 @@ const providers = {
 }
 
 const signers = {
-  arbitrum: new ethers.Wallet(ARBITRUM_DEPLOY_KEY).connect(providers.arbitrum),
-  avax: new ethers.Wallet(ARBITRUM_DEPLOY_KEY).connect(providers.avax)
+  // arbitrum: new ethers.Wallet(ARBITRUM_DEPLOY_KEY).connect(providers.arbitrum),
+  // avax: new ethers.Wallet(ARBITRUM_DEPLOY_KEY).connect(providers.avax)
 }
 
 function sleep(ms) {
@@ -105,10 +105,11 @@ async function deployContract(name, args, label, options) {
 
   let info = name
   if (label) { info = name + ":" + label }
-  const contractFactory = await ethers.getContractFactory(name)
+
+  const contractFactory = await ethers.getContractFactory(name, options)
   let contract
   if (options) {
-    contract = await contractFactory.deploy(...args, options)
+    contract = await contractFactory.deploy(...args)
   } else {
     contract = await contractFactory.deploy(...args)
   }
