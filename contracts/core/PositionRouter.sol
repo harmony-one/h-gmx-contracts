@@ -55,14 +55,13 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
 
     bool public isLeverageEnabled = true;
 
-    bytes32[] public override increasePositionRequestKeys;
-    bytes32[] public override decreasePositionRequestKeys;
+    bytes32[] public increasePositionRequestKeys;
+    bytes32[] public decreasePositionRequestKeys;
 
     uint256 public override increasePositionRequestKeysStart;
     uint256 public override decreasePositionRequestKeysStart;
 
     uint256 public callbackGasLimit;
-    mapping (address => uint256) public customCallbackGasLimits;
 
     mapping (address => bool) public isPositionKeeper;
 
@@ -170,8 +169,7 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
     event SetDelayValues(uint256 minBlockDelayKeeper, uint256 minTimeDelayPublic, uint256 maxTimeDelay);
     event SetRequestKeysStartValues(uint256 increasePositionRequestKeysStart, uint256 decreasePositionRequestKeysStart);
     event SetCallbackGasLimit(uint256 callbackGasLimit);
-    event SetCustomCallbackGasLimit(address callbackTarget, uint256 callbackGasLimit);
-    event Callback(address callbackTarget, bool success, uint256 callbackGasLimit);
+    event Callback(address callbackTarget, bool success);
 
     modifier onlyPositionKeeper() {
         require(isPositionKeeper[msg.sender], "403");
@@ -197,11 +195,6 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
     function setCallbackGasLimit(uint256 _callbackGasLimit) external onlyAdmin {
         callbackGasLimit = _callbackGasLimit;
         emit SetCallbackGasLimit(_callbackGasLimit);
-    }
-
-    function setCustomCallbackGasLimit(address _callbackTarget, uint256 _callbackGasLimit) external onlyAdmin {
-        customCallbackGasLimits[_callbackTarget] = _callbackGasLimit;
-        emit SetCustomCallbackGasLimit(_callbackTarget, _callbackGasLimit);
     }
 
     function setMinExecutionFee(uint256 _minExecutionFee) external onlyAdmin {
@@ -409,7 +402,7 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
         );
     }
 
-    function getRequestQueueLengths() external view override returns (uint256, uint256, uint256, uint256) {
+    function getRequestQueueLengths() external view returns (uint256, uint256, uint256, uint256) {
         return (
             increasePositionRequestKeysStart,
             increasePositionRequestKeys.length,
@@ -436,13 +429,13 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
                 amountIn = _swap(request.path, request.minOut, address(this));
             }
 
-            uint256 afterFeeAmount = _collectFees(request.account, request.path, amountIn, request.indexToken, request.isLong, request.sizeDelta);
+            uint256 afterFeeAmount = _collectFees(msg.sender, request.path, amountIn, request.indexToken, request.isLong, request.sizeDelta);
             IERC20(request.path[request.path.length - 1]).safeTransfer(vault, afterFeeAmount);
         }
 
         _increasePosition(request.account, request.path[request.path.length - 1], request.indexToken, request.sizeDelta, request.isLong, request.acceptablePrice);
 
-        _transferOutETHWithGasLimitFallbackToWeth(request.executionFee, _executionFeeReceiver);
+        _transferOutETHWithGasLimitIgnoreFail(request.executionFee, _executionFeeReceiver);
 
         emit ExecuteIncreasePosition(
             request.account,
@@ -474,12 +467,12 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
         delete increasePositionRequests[_key];
 
         if (request.hasCollateralInETH) {
-            _transferOutETHWithGasLimitFallbackToWeth(request.amountIn, payable(request.account));
+            _transferOutETHWithGasLimitIgnoreFail(request.amountIn, payable(request.account));
         } else {
             IERC20(request.path[0]).safeTransfer(request.account, request.amountIn);
         }
 
-       _transferOutETHWithGasLimitFallbackToWeth(request.executionFee, _executionFeeReceiver);
+       _transferOutETHWithGasLimitIgnoreFail(request.executionFee, _executionFeeReceiver);
 
         emit CancelIncreasePosition(
             request.account,
@@ -519,13 +512,13 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
             }
 
             if (request.withdrawETH) {
-               _transferOutETHWithGasLimitFallbackToWeth(amountOut, payable(request.receiver));
+               _transferOutETHWithGasLimitIgnoreFail(amountOut, payable(request.receiver));
             } else {
                IERC20(request.path[request.path.length - 1]).safeTransfer(request.receiver, amountOut);
             }
         }
 
-       _transferOutETHWithGasLimitFallbackToWeth(request.executionFee, _executionFeeReceiver);
+       _transferOutETHWithGasLimitIgnoreFail(request.executionFee, _executionFeeReceiver);
 
         emit ExecuteDecreasePosition(
             request.account,
@@ -557,7 +550,7 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
 
         delete decreasePositionRequests[_key];
 
-       _transferOutETHWithGasLimitFallbackToWeth(request.executionFee, _executionFeeReceiver);
+       _transferOutETHWithGasLimitIgnoreFail(request.executionFee, _executionFeeReceiver);
 
         emit CancelDecreasePosition(
             request.account,
@@ -583,26 +576,20 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
         return keccak256(abi.encodePacked(_account, _index));
     }
 
-    function getIncreasePositionRequestPath(bytes32 _key) public view override returns (address[] memory) {
+    function getIncreasePositionRequestPath(bytes32 _key) public view returns (address[] memory) {
         IncreasePositionRequest memory request = increasePositionRequests[_key];
         return request.path;
     }
 
-    function getDecreasePositionRequestPath(bytes32 _key) public view override returns (address[] memory) {
+    function getDecreasePositionRequestPath(bytes32 _key) public view returns (address[] memory) {
         DecreasePositionRequest memory request = decreasePositionRequests[_key];
         return request.path;
     }
 
     function _setTraderReferralCode(bytes32 _referralCode) internal {
-        if (_referralCode == bytes32(0)) { return; }
-        if (referralStorage == address(0)) { return; }
-
-        IReferralStorage _referralStorage = IReferralStorage(referralStorage);
-
-        // skip setting of the referral code if the user already has a referral code
-        if (_referralStorage.traderReferralCodes(msg.sender) != bytes32(0)) { return; }
-
-        _referralStorage.setTraderReferralCode(msg.sender, _referralCode);
+        if (_referralCode != bytes32(0) && referralStorage != address(0)) {
+            IReferralStorage(referralStorage).setTraderReferralCode(msg.sender, _referralCode);
+        }
     }
 
     function _validateExecution(uint256 _positionBlockNumber, uint256 _positionBlockTime, address _account) internal view returns (bool) {
@@ -610,14 +597,24 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
             revert("expired");
         }
 
-        return _validateExecutionOrCancellation(_positionBlockNumber, _positionBlockTime, _account);
+        bool isKeeperCall = msg.sender == address(this) || isPositionKeeper[msg.sender];
+
+        if (!isLeverageEnabled && !isKeeperCall) {
+            revert("403");
+        }
+
+        if (isKeeperCall) {
+            return _positionBlockNumber.add(minBlockDelayKeeper) <= block.number;
+        }
+
+        require(msg.sender == _account, "403");
+
+        require(_positionBlockTime.add(minTimeDelayPublic) <= block.timestamp, "delay");
+
+        return true;
     }
 
     function _validateCancellation(uint256 _positionBlockNumber, uint256 _positionBlockTime, address _account) internal view returns (bool) {
-        return _validateExecutionOrCancellation(_positionBlockNumber, _positionBlockTime, _account);
-    }
-
-    function _validateExecutionOrCancellation(uint256 _positionBlockNumber, uint256 _positionBlockTime, address _account) internal view returns (bool) {
         bool isKeeperCall = msg.sender == address(this) || isPositionKeeper[msg.sender];
 
         if (!isLeverageEnabled && !isKeeperCall) {
@@ -775,13 +772,6 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
         }
 
         uint256 _gasLimit = callbackGasLimit;
-
-        uint256 _customCallbackGasLimit = customCallbackGasLimits[_callbackTarget];
-
-        if (_customCallbackGasLimit > _gasLimit) {
-            _gasLimit = _customCallbackGasLimit;
-        }
-
         if (_gasLimit == 0) {
             return;
         }
@@ -791,6 +781,6 @@ contract PositionRouter is BasePositionManager, IPositionRouter {
             success = true;
         } catch {}
 
-        emit Callback(_callbackTarget, success, _gasLimit);
+        emit Callback(_callbackTarget, success);
     }
 }

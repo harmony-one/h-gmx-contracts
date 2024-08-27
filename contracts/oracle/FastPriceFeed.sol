@@ -46,6 +46,8 @@ contract FastPriceFeed is ISecondaryPriceFeed, IFastPriceFeed, Governable {
 
     address public tokenManager;
 
+    address public positionRouter;
+
     uint256 public override lastUpdatedAt;
     uint256 public override lastUpdatedBlock;
 
@@ -106,7 +108,8 @@ contract FastPriceFeed is ISecondaryPriceFeed, IFastPriceFeed, Governable {
       uint256 _minBlockInterval,
       uint256 _maxDeviationBasisPoints,
       address _fastPriceEvents,
-      address _tokenManager
+      address _tokenManager,
+      address _positionRouter
     ) public {
         require(_priceDuration <= MAX_PRICE_DURATION, "FastPriceFeed: invalid _priceDuration");
         priceDuration = _priceDuration;
@@ -115,6 +118,7 @@ contract FastPriceFeed is ISecondaryPriceFeed, IFastPriceFeed, Governable {
         maxDeviationBasisPoints = _maxDeviationBasisPoints;
         fastPriceEvents = _fastPriceEvents;
         tokenManager = _tokenManager;
+        positionRouter = _positionRouter;
     }
 
     function initialize(uint256 _minAuthorizations, address[] memory _signers, address[] memory _updaters) public onlyGov {
@@ -258,7 +262,6 @@ contract FastPriceFeed is ISecondaryPriceFeed, IFastPriceFeed, Governable {
     }
 
     function setPricesWithBitsAndExecute(
-        address _positionRouter,
         uint256 _priceBits,
         uint256 _timestamp,
         uint256 _endIndexForIncreasePositions,
@@ -268,9 +271,9 @@ contract FastPriceFeed is ISecondaryPriceFeed, IFastPriceFeed, Governable {
     ) external onlyUpdater {
         _setPricesWithBits(_priceBits, _timestamp);
 
-        IPositionRouter positionRouter = IPositionRouter(_positionRouter);
-        uint256 maxEndIndexForIncrease = positionRouter.increasePositionRequestKeysStart().add(_maxIncreasePositions);
-        uint256 maxEndIndexForDecrease = positionRouter.decreasePositionRequestKeysStart().add(_maxDecreasePositions);
+        IPositionRouter _positionRouter = IPositionRouter(positionRouter);
+        uint256 maxEndIndexForIncrease = _positionRouter.increasePositionRequestKeysStart().add(_maxIncreasePositions);
+        uint256 maxEndIndexForDecrease = _positionRouter.decreasePositionRequestKeysStart().add(_maxDecreasePositions);
 
         if (_endIndexForIncreasePositions > maxEndIndexForIncrease) {
             _endIndexForIncreasePositions = maxEndIndexForIncrease;
@@ -280,8 +283,8 @@ contract FastPriceFeed is ISecondaryPriceFeed, IFastPriceFeed, Governable {
             _endIndexForDecreasePositions = maxEndIndexForDecrease;
         }
 
-        positionRouter.executeIncreasePositions(_endIndexForIncreasePositions, payable(msg.sender));
-        positionRouter.executeDecreasePositions(_endIndexForDecreasePositions, payable(msg.sender));
+        _positionRouter.executeIncreasePositions(_endIndexForIncreasePositions, payable(msg.sender));
+        _positionRouter.executeDecreasePositions(_endIndexForDecreasePositions, payable(msg.sender));
     }
 
     function disableFastPrice() external onlySigner {
