@@ -80,4 +80,4 @@ const tokens = [
 
 const getTokens = () => tokens;
 
-module.exports = { getTokens }
+module.exports = { getTokens, toChainlinkPrice }
